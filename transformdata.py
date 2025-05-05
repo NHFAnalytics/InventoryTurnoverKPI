@@ -112,8 +112,20 @@ def get_parts(transactions: pl.DataFrame, inventory: pl.DataFrame):
             .otherwise(pl.lit('Each'))
             .alias('UoM')
         )
+        .with_columns(
+            pl.col('Part Number')
+            .str.slice(0,4)
+            .str.to_integer(strict=False)
+            .alias('Project')
+        )
+        .with_columns(
+            pl.when(pl.col('Part Number').str.starts_with('WW01'))
+            .then(pl.lit(1183))
+            .otherwise(pl.col('Project'))
+            .alias('Project')
+        )
         .drop('Decimal?')
-        .sort(['ClassID', 'UoM', 'Part Number'])
+        .sort(['ClassID', 'Project', 'UoM', 'Part Number'])
     )
 
     return parts
@@ -142,7 +154,7 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
         )
         # aggregate values by part number
         .group_by(
-            ['KPI Month', 'ClassID', 'Class Group', 'Description', 'Part Number','UoM']
+            ['KPI Month', 'Project', 'ClassID', 'Class Group', 'Description', 'Part Number','UoM']
         )
         .agg([pl.col('Received.Quantity').sum()])
         # join with inventory on START Month to get begining of month inventory level
@@ -161,7 +173,7 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
             right_on = ['END Month', 'Part Number']
         )
         .rename({'Quantity' : 'End.Quantity'})
-        .sort(['KPI Month', 'Class Group', 'ClassID', 'Part Number'])
+        .sort(['KPI Month', 'Project', 'Class Group', 'ClassID', 'Part Number'])
     )
 
     print('part table')
@@ -169,8 +181,20 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
     print(part_table.columns)
 
 
-    class_table = (
+    class_project_table = (
         part_table.group_by(
+            ['KPI Month', 'Project', 'ClassID', 'Class Group', 'Description', 'UoM']
+        )
+        .agg(
+            [pl.col('Received.Quantity').sum(),
+             pl.col('Start.Quantity').sum(),
+             pl.col('End.Quantity').sum()]
+        )
+        .sort(['KPI Month', 'Class Group', 'ClassID', 'Project', 'UoM'])
+    )
+
+    class_table = (
+        class_project_table.group_by(
             ['KPI Month', 'ClassID', 'Class Group', 'Description', 'UoM']
         )
         .agg(
@@ -178,14 +202,27 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
              pl.col('Start.Quantity').sum(),
              pl.col('End.Quantity').sum()]
         )
-        .sort(['KPI Month', 'Class Group', 'ClassID'])
+        .sort(['KPI Month', 'Class Group', 'ClassID', 'UoM'])
     )
+
     print('class table')
     print(class_table)
     print(class_table.columns)
 
+    group_project_table = (
+        class_project_table.group_by(
+            ['KPI Month', 'Project', 'Class Group', 'UoM']
+        )
+        .agg(
+            [pl.col('Received.Quantity').sum(),
+             pl.col('Start.Quantity').sum(),
+             pl.col('End.Quantity').sum()]
+        )
+        .sort(['KPI Month', 'Class Group', 'Project', 'UoM'])
+    )
+
     group_table = (
-        class_table.group_by(
+        group_project_table.group_by(
             ['KPI Month', 'Class Group', 'UoM']
         )
         .agg(
@@ -193,8 +230,9 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
              pl.col('Start.Quantity').sum(),
              pl.col('End.Quantity').sum()]
         )
-        .sort(['KPI Month', 'Class Group'])
+        .sort(['KPI Month', 'Class Group', 'UoM'])
     )
+
     print('group table')
     print(group_table)
     print(group_table.columns)
@@ -216,6 +254,16 @@ def populate_KPI_tables(months: pl.DataFrame, part_classes: pl.DataFrame, parts:
         group_table.write_excel(
             workbook = wb,
             worksheet = 'KPI_Groups'
+        )
+
+        class_project_table.write_excel(
+            workbook = wb,
+            worksheet = 'KPI_PROJ_Classes'
+        )
+
+        group_project_table.write_excel(
+            workbook = wb,
+            worksheet = 'KPI_PROJ_Groups'
         )
 
     return ''
